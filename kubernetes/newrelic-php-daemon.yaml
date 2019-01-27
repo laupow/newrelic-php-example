@@ -1,0 +1,91 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: newrelic-php-daemon
+  labels:
+    app: newrelic-php-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: newrelic-php-daemon
+  template:
+    metadata:
+      labels:
+        name: newrelic-php-daemon
+    spec:
+      containers:
+      - name: daemon
+        image: gcr.io/$GOOGLE_PROJECT/example-app:$CONTAINER_TAG
+        command:
+        - /bin/bash
+        - -c
+        - newrelic-daemon -f --port $(NEWRELIC_DAEMON_PORT) --logfile /proc/self/fd/2 --loglevel $(NEWRELIC_PHP_LOGLEVEL)
+        resources:
+          requests:
+            cpu: 50m
+        securityContext:
+          runAsUser: 33 # www-data user in official php container
+          allowPrivilegeEscalation: false
+        env:
+        - name: NEWRELIC_DAEMON_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_PORT
+              name: newrelic-env-config
+        - name: NEWRELIC_PHP_LOGLEVEL
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_PHP_LOGLEVEL
+              name: newrelic-env-config
+      - name: socat
+        image: gcr.io/$GOOGLE_PROJECT/example-app:$CONTAINER_TAG
+        command:
+        - /bin/bash
+        - -c
+        - socat -d -d TCP-LISTEN:$(NEWRELIC_DAEMON_SOCAT_PORT),reuseaddr,fork,su=nobody TCP:127.0.0.1:$(NEWRELIC_DAEMON_PORT)
+        resources:
+          requests:
+            cpu: 20m
+        livenessProbe:
+          tcpSocket:
+            # Same as NEWRELIC_DAEMON_SOCAT_PORT
+            port: 33143
+          initialDelaySeconds: 1
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            # Same as NEWRELIC_DAEMON_SOCAT_PORT
+            port: 33143
+          initialDelaySeconds: 1
+          periodSeconds: 3
+        env:
+        - name: NEWRELIC_DAEMON_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_PORT
+              name: newrelic-env-config
+        - name: NEWRELIC_DAEMON_HOST
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_HOST
+              name: newrelic-env-config
+        - name: NEWRELIC_DAEMON_SOCAT_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_SOCAT_PORT
+              name: newrelic-env-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: newrelic-daemon
+  labels:
+    app: newrelic-daemon
+spec:
+  ports:
+  - port: 33143
+    targetPort: 33143
+  selector:
+    name: newrelic-php-daemon

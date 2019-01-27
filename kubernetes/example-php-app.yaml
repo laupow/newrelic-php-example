@@ -1,0 +1,208 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-php-app
+  labels:
+    app: example-php-app
+spec:
+  selector:
+    matchLabels:
+      app: example-php-app
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    rollingUpdate:
+      maxSurge: 100%
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: example-php-app
+    spec:
+      containers:
+      - name: app
+        image: gcr.io/$GOOGLE_PROJECT/example-app:$CONTAINER_TAG
+        volumeMounts:
+        - name: newrelic-php-ini
+          mountPath: /usr/local/etc/php/conf.d/
+        resources:
+          requests:
+            cpu: 50m
+        securityContext:
+          runAsUser: 33 # www-data user in official php container
+          allowPrivilegeEscalation: false
+        livenessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 1
+          periodSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 1
+          periodSeconds: 10
+        env:
+        - name: NEWRELIC_PHP_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_PHP_ENABLED
+              name: newrelic-env-config
+        - name: NEWRELIC_PHP_LICENSE
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_PHP_LICENSE
+              name: newrelic-env-config
+        - name: NEWRELIC_PHP_APPNAME
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_PHP_APPNAME
+              name: newrelic-env-config
+        - name: NEWRELIC_PHP_LOGFILE
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_PHP_LOGFILE
+              name: newrelic-env-config
+        - name: NEWRELIC_PHP_LOGLEVEL
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_PHP_LOGLEVEL
+              name: newrelic-env-config
+        - name: NEWRELIC_DAEMON_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_PORT
+              name: newrelic-env-config
+      - name: nginx
+        image: nginx:latest
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        resources:
+          requests:
+            cpu: 50m
+        livenessProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 1
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 80
+          periodSeconds: 3
+          timeoutSeconds: 1
+          successThreshold: 2
+          failureThreshold: 3
+      - name: socat
+        image: gcr.io/$GOOGLE_PROJECT/example-app:$CONTAINER_TAG
+        command:
+        - /bin/bash
+        - -c
+        - socat -d -d TCP-LISTEN:$(NEWRELIC_DAEMON_PORT),reuseaddr,fork,su=nobody TCP:$(NEWRELIC_DAEMON_HOST):$(NEWRELIC_DAEMON_SOCAT_PORT)
+        resources:
+          requests:
+            cpu: 20m
+        livenessProbe:
+          tcpSocket:
+            # Same as NEWRELIC_DAEMON_PORT
+            port: 33142
+          initialDelaySeconds: 1
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            # Same as NEWRELIC_DAEMON_PORT
+            port: 33142
+          initialDelaySeconds: 1
+          periodSeconds: 3
+        env:
+        - name: NEWRELIC_DAEMON_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_PORT
+              name: newrelic-env-config
+        - name: NEWRELIC_DAEMON_HOST
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_HOST
+              name: newrelic-env-config
+        - name: NEWRELIC_DAEMON_SOCAT_PORT
+          valueFrom:
+            configMapKeyRef:
+              key: NEWRELIC_DAEMON_SOCAT_PORT
+              name: newrelic-env-config
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+      - name: newrelic-env-config
+        configMap:
+          name: newrelic-env-config
+      - name: newrelic-php-ini
+        configMap:
+          name: newrelic-php-ini
+---
+apiVersion: v1
+data:
+  default.conf: |
+    server {
+      listen 0.0.0.0:80;
+      server_name _;
+
+      root /var/www/html;
+      index index.php;
+
+      location / {
+        fastcgi_pass 127.0.0.1:9000;
+        rewrite ^ /index.php break;
+        include fastcgi_params;
+        fastcgi_param   SCRIPT_FILENAME    $document_root$fastcgi_script_name;
+        fastcgi_param   SCRIPT_NAME        $fastcgi_script_name;
+      }
+
+      location = /healthz {
+        # Return HTTP 200 by default
+        # or forward this block to your application healthcheck script
+        return 200;
+      }
+    }
+kind: ConfigMap
+metadata:
+  name: nginx-config
+---
+apiVersion: v1
+data:
+  newrelic.ini: |
+    extension = "newrelic.so"
+    newrelic.enabled     = ${NEWRELIC_PHP_ENABLED}
+    newrelic.appname     = ${NEWRELIC_PHP_APPNAME}
+    newrelic.license     = ${NEWRELIC_PHP_LICENSE}
+    newrelic.logfile     = ${NEWRELIC_PHP_LOGFILE}
+    newrelic.loglevel    = ${NEWRELIC_PHP_LOGLEVEL}
+    newrelic.daemon.port = ${NEWRELIC_DAEMON_PORT}
+    newrelic.daemon.dont_launch = 3
+    newrelic.browser_monitoring.attributes.enabled = true
+    newrelic.browser_monitoring.auto_instrument = 1
+    newrelic.capture_params = 0
+    newrelic.ignored_params = ""
+    newrelic.error_collector.record_database_errors = 1
+    ;newrelic.framework = "wordpress"
+    newrelic.transaction_tracer.detail = 1
+    newrelic.transaction_tracer.record_sql = "obfuscated"
+kind: ConfigMap
+metadata:
+  name: newrelic-php-ini
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-php-app
+  labels:
+    app: example-php-app
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: example-php-app
