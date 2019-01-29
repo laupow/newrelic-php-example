@@ -46,7 +46,7 @@ Then configure the `gcloud` cli tool for your new project id
 _Takes 10-15 minutes_
 
 ```bash
-terraform terraform init terraform-gke-cluster/
+terraform init terraform-gke-cluster/
 terraform apply terraform-gke-cluster/
 ```
 
