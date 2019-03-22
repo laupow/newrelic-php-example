@@ -36,7 +36,7 @@ export NEWRELIC_PHP_LICENSE=my_newrelic_license_key
 export CONTAINER_TAG=test1
 
 # optional
-export NR_AGENT_VERSION=8.5.0.235
+export NR_AGENT_VERSION=8.6.0.238
 ```
 
 Then configure the `gcloud` cli tool for your new project id
