@@ -16,6 +16,7 @@ Note that walking through this steps will incur charges in Google Cloud. There's
 * Terraform
 * gcloud-sdk
 * kubernetes-cli
+* envsubst
 * A New Relic account and license key
 
 ## Create a new Google Cloud Project
